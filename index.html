@@ -795,9 +795,10 @@ async function generate() {
 </style>
 <div class="wrap"><div class="card hist-card">
   <h3>⭐ Saved & Recent Letters</h3>
-  <p class="sub" style="margin:0 0 8px">Aapka kaam apne aap save hota rehta hai (refresh karne par wapas aa jayega). Letter ko naam dekar save karo ya ⭐ karo, phir kabhi bhi Open karke edit + download karo. Yeh sirf isi phone/computer ke browser mein save hota hai.</p>
+  <p class="sub" style="margin:0 0 8px">Aapka kaam apne aap save hota rehta hai (refresh karne par wapas aa jayega). Letter ko naam dekar save karo ya ⭐ karo, phir kabhi bhi Open karke edit + download karo. Team password se ☁ sync connect karo to yehi letters sab phone/laptop par dikhengi.</p>
   <div class="btnbar"><button class="btn-add" onclick="ELS.saveNamed()">💾 Save this letter</button><button class="btn-add" onclick="ELS.newLetter()">+ New blank letter</button></div>
   <div id="draftMsg"></div>
+  <div class="btnbar" style="margin:4px 0"><button class="btn-add" onclick="ELS.sync(true)">☁ Connect / Sync now</button><span id="syncMsg" style="font-size:12px;color:#456;align-self:center"></span></div>
   <div id="histList"></div>
 </div></div>
 
@@ -861,7 +862,7 @@ function billSnap(id){const b=billRead(id);return{t:'bill',gst:b.g,rows:b.rows.m
 </script>
 <script>
 const ELS=(function(){
-const DK='els_letter_draft_v1',LK='els_letter_list_v1';
+const DK='els_letter_draft_v1',LK='els_letter_list_v1',XK='els_letter_deleted_v1',PK='els_team_pass_v1';
 function rd(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}}
 function wr(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}
 const $=id=>document.getElementById(id);
@@ -905,14 +906,38 @@ function render(){
     b[0].onclick=()=>upd(it.id,x=>{x.star=!x.star;x.auto=false});
     b[1].onclick=()=>{apply(it.state);autosave();window.scrollTo({top:0,behavior:'smooth'});msg('✓ "'+it.name+'" khul gaya — edit karke download karo')};
     b[2].onclick=()=>{const n=prompt('New name',it.name);if(n)upd(it.id,x=>{x.name=n;x.auto=false})};
-    b[3].onclick=()=>{if(confirm('Delete "'+it.name+'"?'))wr(LK,rd(LK,[]).filter(x=>x.id!==it.id))||0,render()};
+    b[3].onclick=()=>{if(confirm('Delete "'+it.name+'"?'))delItem(it.id)};
     box.appendChild(r);
   });
 }
-function upd(id,fn){const l=rd(LK,[]);const x=l.find(y=>y.id===id);if(x){fn(x);wr(LK,l)}render()}
+function upd(id,fn){const l=rd(LK,[]);const x=l.find(y=>y.id===id);if(x){fn(x);x.mod=Date.now();save(l)}render()}
+function save(l){wr(LK,l);schedSync()}
+function delItem(id){const x=rd(XK,{});x[id]=Date.now();wr(XK,x);save(rd(LK,[]).filter(y=>y.id!==id));render()}
+let st,syncing=false;
+function schedSync(){clearTimeout(st);st=setTimeout(()=>sync(false),1500)}
+function setSync(t){const e=$('syncMsg');if(e)e.textContent=t}
+async function sync(ask){
+  let pw='';try{pw=localStorage.getItem(PK)||''}catch(e){}
+  if(!pw){if(!ask){setSync('☁ Sync off — "Connect sync" dabao');return}pw=prompt('Team password daalo (sab devices par same):')||'';if(!pw)return}
+  if(syncing)return;syncing=true;setSync('☁ Syncing…');
+  try{
+    const r=await fetch('/api/letters',{headers:{'x-team-pass':pw}});
+    if(r.status===401){try{localStorage.removeItem(PK)}catch(e){};setSync('☁ Galat password');syncing=false;return}
+    if(!r.ok)throw new Error('server '+r.status);
+    const rem=await r.json();const del=Object.assign({},rem.deleted||{},rd(XK,{}));
+    const m={};(rem.list||[]).concat(rd(LK,[])).forEach(x=>{const o=m[x.id];if(!o||(x.mod||x.ts)>(o.mod||o.ts))m[x.id]=x});
+    const merged=Object.values(m).filter(x=>!del[x.id]);
+    wr(LK,merged);wr(XK,del);
+    const w=await fetch('/api/letters',{method:'PUT',headers:{'x-team-pass':pw,'Content-Type':'application/json'},body:JSON.stringify({list:merged,deleted:del})});
+    if(!w.ok)throw new Error('save '+w.status);
+    try{localStorage.setItem(PK,pw)}catch(e){}
+    render();setSync('☁ Synced ✓ '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}));
+  }catch(e){setSync('☁ Sync fail: '+e.message+' (offline ho sakta hai)')}
+  syncing=false;
+}
 function saveNamed(){
   const s=snap();const n=prompt('Is letter ka naam likho:',title(s));if(!n)return;
-  const l=rd(LK,[]);l.push({id:'l'+Date.now(),name:n,ts:Date.now(),star:true,state:s});wr(LK,l);render();msg('✓ Saved "'+n+'"');
+  const l=rd(LK,[]);l.push({id:'l'+Date.now(),name:n,ts:Date.now(),star:true,state:s});save(l);render();msg('✓ Saved "'+n+'"');
 }
 function recordDownload(){
   const s=snap();const l=rd(LK,[]);const js=JSON.stringify(s);
@@ -920,7 +945,7 @@ function recordDownload(){
   l.push({id:'l'+Date.now(),name:title(s),ts:Date.now(),star:false,auto:true,state:s});
   // keep only latest 20 unstarred auto entries
   const auto=l.filter(x=>x.auto&&!x.star).sort((a,b)=>b.ts-a.ts).slice(20).map(x=>x.id);
-  wr(LK,l.filter(x=>!auto.includes(x.id)));render();
+  save(l.filter(x=>!auto.includes(x.id)));render();
 }
 function newLetter(){
   if(!confirm('Current form saaf karke naya blank letter shuru karein? (Purana draft recent mein save rahega agar download kiya tha)'))return;
@@ -932,8 +957,8 @@ window.generate=async function(){try{recordDownload()}catch(e){}return og.apply(
 // restore draft
 const d=rd(DK,null);if(d){try{apply(d);msg('✓ Pichla draft wapas load ho gaya')}catch(e){}}
 ['input','change','click','keyup'].forEach(ev=>document.addEventListener(ev,e=>{if(e.target.closest&&e.target.closest('.hist-card'))return;autosave()}));
-render();
-return{saveNamed,newLetter,snap,apply,render};
+render();setTimeout(()=>sync(false),300);
+return{sync,saveNamed,newLetter,snap,apply,render};
 })();
 </script>
 </body>
