@@ -1,4 +1,4 @@
-const { put, list } = require('@vercel/blob');
+const { put, get } = require('@vercel/blob');
 const crypto = require('crypto');
 module.exports = async (req, res) => {
   const pass = process.env.TEAM_PASSWORD;
@@ -8,16 +8,15 @@ module.exports = async (req, res) => {
   const name = 'els-' + crypto.createHash('sha256').update(pass + ':letters').digest('hex').slice(0, 24) + '.json';
   try {
     if (req.method === 'GET') {
-      const { blobs } = await list({ prefix: name });
-      const b = blobs.find(x => x.pathname === name);
-      if (!b) return res.status(200).json({ list: [], deleted: {} });
-      const r = await fetch(b.url + '?t=' + Date.now(), { cache: 'no-store' });
-      return res.status(200).json(await r.json());
+      const r = await get(name, { access: 'private', useCache: false });
+      if (!r || r.statusCode !== 200) return res.status(200).json({ list: [], deleted: {} });
+      const txt = await new Response(r.stream).text();
+      return res.status(200).json(JSON.parse(txt));
     }
     if (req.method === 'PUT') {
       const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
       await put(name, JSON.stringify({ list: body.list || [], deleted: body.deleted || {} }), {
-        access: 'public', addRandomSuffix: false, allowOverwrite: true, contentType: 'application/json', cacheControlMaxAge: 0
+        access: 'private', addRandomSuffix: false, allowOverwrite: true, contentType: 'application/json', cacheControlMaxAge: 0
       });
       return res.status(200).json({ ok: true });
     }

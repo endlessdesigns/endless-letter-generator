@@ -1,1 +1,1 @@
-{ "name": "endless-letter-generator", "private": true, "dependencies": { "@vercel/blob": "^0.27.0" } }
+{ "name": "endless-letter-generator", "private": true, "dependencies": { "@vercel/blob": "^2.9.0" } }
