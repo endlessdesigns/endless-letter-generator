@@ -778,5 +778,99 @@ async function generate() {
   }
 }
 </script>
+<style>
+.hist-card{margin-top:18px}
+.hist-card h3{margin:0 0 8px;font-size:16px}
+.hist-item{display:flex;align-items:center;gap:8px;padding:9px 10px;border:1px solid #cfe3e8;border-radius:10px;margin-bottom:8px;background:#fff}
+.hist-item .nm{flex:1;min-width:0;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hist-item .nm small{display:block;color:#6b7c85;font-size:11px}
+.hist-item button{border:1px solid #bcd5dc;background:#f3fafc;border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer}
+.hist-item button.star{font-size:18px;line-height:1;padding:3px 8px;border:none;background:none;color:#b8c4c9}
+.hist-item button.star.on{color:#f5a623}
+.hist-empty{color:#6b7c85;font-size:13px;padding:6px 0}
+#draftMsg{font-size:12px;color:#2f7d5b;margin:6px 0}
+</style>
+<div class="wrap"><div class="card hist-card">
+  <h3>⭐ Saved & Recent Letters</h3>
+  <p class="sub" style="margin:0 0 8px">Aapka kaam apne aap save hota rehta hai (refresh karne par wapas aa jayega). Letter ko naam dekar save karo ya ⭐ karo, phir kabhi bhi Open karke edit + download karo. Yeh sirf isi phone/computer ke browser mein save hota hai.</p>
+  <div class="btnbar"><button class="btn-add" onclick="ELS.saveNamed()">💾 Save this letter</button><button class="btn-add" onclick="ELS.newLetter()">+ New blank letter</button></div>
+  <div id="draftMsg"></div>
+  <div id="histList"></div>
+</div></div>
+<script>
+const ELS=(function(){
+const DK='els_letter_draft_v1',LK='els_letter_list_v1';
+function rd(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}}
+function wr(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}
+const $=id=>document.getElementById(id);
+function snap(){
+  const blocks=Array.from($('content').children).map(el=>{
+    const t=el.dataset.blockType;
+    if(t==='table')return{t:'table',grid:readTableGrid(el.id)};
+    if(t==='spacer'){const s=el.querySelector('select');return{t:'spacer',h:s?s.value:'20'}}
+    const f=el.querySelector('.rich-field');return{t:'para',html:f?f.innerHTML:''};
+  });
+  return{date:$('date').value,to:$('to').innerHTML,subject:$('subject').value,sal:$('salutation').value,blocks,closing:$('closing').value,sig:$('sig').innerHTML};
+}
+function apply(s){
+  $('date').value=s.date||'';$('to').innerHTML=s.to||'';$('subject').value=s.subject||'';
+  $('salutation').value=s.sal||'';$('closing').value=s.closing||'';$('sig').innerHTML=s.sig||'';
+  $('content').innerHTML='';
+  (s.blocks||[]).forEach(b=>{
+    if(b.t==='table'){addTable();const id='table_'+tableCount;renderTableGrid(id,b.grid)}
+    else if(b.t==='spacer'){addSpacer();const el=$('spacer_'+spacerCount);el.dataset.height=b.h;el.querySelector('select').value=b.h}
+    else{addPara(b.html)}
+  });
+}
+let tm;function msg(t){const m=$('draftMsg');if(m)m.textContent=t}
+function autosave(){clearTimeout(tm);tm=setTimeout(()=>{if(wr(DK,snap()))msg('✓ Draft auto-saved')},400)}
+function title(s){
+  const d=document.createElement('div');d.innerHTML=s.subject?'':s.to;
+  return(s.subject||d.textContent.split('\n')[0]||'Untitled letter').trim().slice(0,60)||'Untitled letter';
+}
+function render(){
+  const list=rd(LK,[]).sort((a,b)=>(b.star-a.star)||(b.ts-a.ts));
+  const box=$('histList');box.innerHTML='';
+  if(!list.length){box.innerHTML='<div class="hist-empty">Abhi koi saved letter nahi hai.</div>';return}
+  list.forEach(it=>{
+    const r=document.createElement('div');r.className='hist-item';
+    const d=new Date(it.ts).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+    r.innerHTML='<button class="star'+(it.star?' on':'')+'" title="Star">'+(it.star?'★':'☆')+'</button><div class="nm"></div><button>Open</button><button>Rename</button><button>Delete</button>';
+    const nm=r.querySelector('.nm');nm.textContent=it.name;const sm=document.createElement('small');sm.textContent=(it.auto?'Downloaded · ':'Saved · ')+d;nm.appendChild(sm);
+    const b=r.querySelectorAll('button');
+    b[0].onclick=()=>upd(it.id,x=>{x.star=!x.star;x.auto=false});
+    b[1].onclick=()=>{apply(it.state);autosave();window.scrollTo({top:0,behavior:'smooth'});msg('✓ "'+it.name+'" khul gaya — edit karke download karo')};
+    b[2].onclick=()=>{const n=prompt('New name',it.name);if(n)upd(it.id,x=>{x.name=n;x.auto=false})};
+    b[3].onclick=()=>{if(confirm('Delete "'+it.name+'"?'))wr(LK,rd(LK,[]).filter(x=>x.id!==it.id))||0,render()};
+    box.appendChild(r);
+  });
+}
+function upd(id,fn){const l=rd(LK,[]);const x=l.find(y=>y.id===id);if(x){fn(x);wr(LK,l)}render()}
+function saveNamed(){
+  const s=snap();const n=prompt('Is letter ka naam likho:',title(s));if(!n)return;
+  const l=rd(LK,[]);l.push({id:'l'+Date.now(),name:n,ts:Date.now(),star:true,state:s});wr(LK,l);render();msg('✓ Saved "'+n+'"');
+}
+function recordDownload(){
+  const s=snap();const l=rd(LK,[]);const js=JSON.stringify(s);
+  if(l.some(x=>JSON.stringify(x.state)===js)){return}
+  l.push({id:'l'+Date.now(),name:title(s),ts:Date.now(),star:false,auto:true,state:s});
+  // keep only latest 20 unstarred auto entries
+  const auto=l.filter(x=>x.auto&&!x.star).sort((a,b)=>b.ts-a.ts).slice(20).map(x=>x.id);
+  wr(LK,l.filter(x=>!auto.includes(x.id)));render();
+}
+function newLetter(){
+  if(!confirm('Current form saaf karke naya blank letter shuru karein? (Purana draft recent mein save rahega agar download kiya tha)'))return;
+  apply({date:new Date().toISOString().slice(0,10),to:'',subject:'',sal:'Respected Sir,',blocks:[{t:'para',html:''}],closing:'Thank you for your time and continued cooperation.',sig:$('sig').innerHTML});autosave();
+}
+// hook generate to log history
+const og=window.generate;
+window.generate=async function(){try{recordDownload()}catch(e){}return og.apply(this,arguments)};
+// restore draft
+const d=rd(DK,null);if(d){try{apply(d);msg('✓ Pichla draft wapas load ho gaya')}catch(e){}}
+['input','change','click','keyup'].forEach(ev=>document.addEventListener(ev,e=>{if(e.target.closest&&e.target.closest('.hist-card'))return;autosave()}));
+render();
+return{saveNamed,newLetter,snap,apply,render};
+})();
+</script>
 </body>
 </html>
