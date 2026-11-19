@@ -93,6 +93,7 @@
       <button class="btn-add" onclick="addPara()">+ Add paragraph</button>
       <button class="btn-add" onclick="addTable()">+ Add table</button>
       <button class="btn-add" onclick="addSpacer()">+ Add spacer</button>
+      <button class="btn-add" onclick="addBill()">+ Add billing table (auto GST)</button>
     </div>
 
     <label>Closing line</label>
@@ -589,6 +590,8 @@ async function generate() {
     const contentBlocks = contentEls.map(el => {
       if (el.dataset.blockType === 'table') {
         return { kind: 'table', data: readTableGridForPdf(el.id).map(row => row.map(cell => sanitizeMultiline(cell).join(' '))) };
+      } else if (el.dataset.blockType === 'bill') {
+        return { kind: 'table', data: billPdfData(el.id) };
       } else if (el.dataset.blockType === 'spacer') {
         return { kind: 'spacer', height: parseFloat(el.dataset.height) || 20 };
       } else {
@@ -797,6 +800,65 @@ async function generate() {
   <div id="draftMsg"></div>
   <div id="histList"></div>
 </div></div>
+
+<style>
+.bill-block{border:1px dashed #8fb3af;border-radius:8px;padding:12px;margin-top:14px;background:#f6faf9;position:relative}
+.bill-block .bh{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;font-size:13px}
+.bill-block select{padding:5px 8px;border-radius:5px;border:1px solid #bcd5dc;font-size:13px}
+.bill-scroll{overflow-x:auto}
+.bill-block table{border-collapse:collapse;width:100%;min-width:560px}
+.bill-block th{font-size:11px;text-align:left;padding:4px;color:#456}
+.bill-block td{padding:3px}
+.bill-block input{width:100%;box-sizing:border-box;padding:6px;border:1px solid #d8d2c6;border-radius:4px;font-size:13px}
+.bill-block td.o{font-size:13px;font-weight:600;white-space:nowrap;padding:3px 6px}
+.bill-block .bt{margin-top:8px;font-size:13px;font-weight:700;text-align:right}
+.bill-block .bb button{border:1px solid #bcd5dc;background:#fff;border-radius:6px;padding:5px 10px;font-size:13px;margin-right:6px;cursor:pointer}
+</style>
+<script>
+let billCount=0;
+function fmtN(n){n=Math.round(n*100)/100;return n.toLocaleString('en-IN',{minimumFractionDigits:0,maximumFractionDigits:2})}
+function addBill(d){
+  billCount++;const id='bill_'+billCount;
+  const div=document.createElement('div');div.className='bill-block';div.dataset.blockType='bill';div.id=id;
+  div.innerHTML='<div class="bh"><b>Billing table</b><span>GST % <select class="bgst"><option>0</option><option>5</option><option>12</option><option selected>18</option><option>28</option></select></span><button class="remove" style="position:static" onclick="document.getElementById(\''+id+'\').remove()">Remove</button></div>'+
+  '<div class="bill-scroll"><table><thead><tr><th>#</th><th>Item</th><th style="width:70px">Qty</th><th style="width:100px">Rate</th><th>Amount</th><th class="gh">GST</th><th>Total</th></tr></thead><tbody></tbody></table></div>'+
+  '<div class="bt"></div><div class="bb" style="margin-top:8px"><button onclick="billAddRow(\''+id+'\')">+ Row</button><button onclick="billDelRow(\''+id+'\')">- Row</button></div>';
+  div.addEventListener('input',()=>billCalc(id));div.querySelector('.bgst').addEventListener('change',()=>billCalc(id));
+  document.getElementById('content').appendChild(div);
+  const rows=(d&&d.rows&&d.rows.length)?d.rows:[['','',''],['','','']];
+  if(d&&d.gst!=null)div.querySelector('.bgst').value=String(d.gst);
+  rows.forEach(r=>billAddRow(id,r));billCalc(id);return id;
+}
+function billAddRow(id,r){
+  r=r||['','',''];const tb=document.querySelector('#'+id+' tbody');const tr=document.createElement('tr');
+  tr.innerHTML='<td class="o n"></td><td><input class="bi" placeholder="Item"></td><td><input class="bq" type="number" inputmode="decimal" min="0" step="any"></td><td><input class="br" type="number" inputmode="decimal" min="0" step="any"></td><td class="o ba"></td><td class="o bg"></td><td class="o bto"></td>';
+  tr.querySelector('.bi').value=r[0];tr.querySelector('.bq').value=r[1];tr.querySelector('.br').value=r[2];
+  tb.appendChild(tr);billCalc(id);
+}
+function billDelRow(id){const tb=document.querySelector('#'+id+' tbody');if(tb.rows.length>1){tb.deleteRow(-1);billCalc(id)}}
+function billRead(id){
+  const el=document.getElementById(id);const g=parseFloat(el.querySelector('.bgst').value)||0;let A=0,G=0,T=0;
+  const rows=Array.from(el.querySelectorAll('tbody tr')).map((tr,i)=>{
+    const q=parseFloat(tr.querySelector('.bq').value)||0,r=parseFloat(tr.querySelector('.br').value)||0;
+    const a=q*r,gs=a*g/100,t=a+gs;A+=a;G+=gs;T+=t;
+    return{tr,i,item:tr.querySelector('.bi').value,q:tr.querySelector('.bq').value,r:tr.querySelector('.br').value,a,gs,t};});
+  return{g,rows,A,G,T};
+}
+function billCalc(id){
+  const b=billRead(id);const el=document.getElementById(id);
+  el.querySelector('.gh').textContent='GST '+b.g+'%';
+  b.rows.forEach(x=>{x.tr.querySelector('.n').textContent=x.i+1;x.tr.querySelector('.ba').textContent=fmtN(x.a);x.tr.querySelector('.bg').textContent=fmtN(x.gs);x.tr.querySelector('.bto').textContent=fmtN(x.t)});
+  el.querySelector('.bt').textContent='Subtotal '+fmtN(b.A)+'  +  GST '+fmtN(b.G)+'  =  Grand Total '+fmtN(b.T);
+}
+function billPdfData(id){
+  const b=billRead(id);
+  const d=[['S.No','Item','Qty','Rate','Amount','GST '+b.g+'%','Total']];
+  b.rows.forEach(x=>{if(x.item||x.q||x.r)d.push([String(d.length),x.item,x.q,x.r?fmtN(parseFloat(x.r)):'',fmtN(x.a),fmtN(x.gs),fmtN(x.t)])});
+  d.push(['','Grand Total','','',fmtN(b.A),fmtN(b.G),fmtN(b.T)]);
+  return d.map(r=>r.map(c=>sanitizeMultiline(String(c)).join(' ')));
+}
+function billSnap(id){const b=billRead(id);return{t:'bill',gst:b.g,rows:b.rows.map(x=>[x.item,x.q,x.r])}}
+</script>
 <script>
 const ELS=(function(){
 const DK='els_letter_draft_v1',LK='els_letter_list_v1';
@@ -807,6 +869,7 @@ function snap(){
   const blocks=Array.from($('content').children).map(el=>{
     const t=el.dataset.blockType;
     if(t==='table')return{t:'table',grid:readTableGrid(el.id)};
+    if(t==='bill')return billSnap(el.id);
     if(t==='spacer'){const s=el.querySelector('select');return{t:'spacer',h:s?s.value:'20'}}
     const f=el.querySelector('.rich-field');return{t:'para',html:f?f.innerHTML:''};
   });
@@ -818,6 +881,7 @@ function apply(s){
   $('content').innerHTML='';
   (s.blocks||[]).forEach(b=>{
     if(b.t==='table'){addTable();const id='table_'+tableCount;renderTableGrid(id,b.grid)}
+    else if(b.t==='bill'){addBill(b)}
     else if(b.t==='spacer'){addSpacer();const el=$('spacer_'+spacerCount);el.dataset.height=b.h;el.querySelector('select').value=b.h}
     else{addPara(b.html)}
   });
